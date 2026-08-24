@@ -1,0 +1,17 @@
+fastapi
+uvicorn
+pydantic-settings
+langchain-openai
+langchain-community
+langchain-chroma
+chromadb
+pypdf
+ragas
+datasets
+python-multipart
+python-dotenv
+structlog
+langchain-text-splitters
+langchain
+langchain-google-vertexai
+langchain_huggingface
