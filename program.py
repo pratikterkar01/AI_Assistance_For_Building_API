@@ -2,7 +2,6 @@ import uvicorn
 from app import app
 from Utils.logger import get_logger
 from Utils.Config import get_settings
-from Utils.db_client import init_chromadb
 from fastapi import FastAPI
 from controller.chat_controller import router as chat_router
 from controller.document_controller import router as doc_router
@@ -15,7 +14,7 @@ settings = get_settings()
 @app.on_event("startup")
 async def on_startup():
     logger.info("Starting up AiBuildingAssistanceApi...")
-    init_chromadb()                  # initialise ChromaDB collection
+    #init_chromadb()                  # initialise ChromaDB collection
     register_all_routers(app)        # mount all controllers
     logger.info("All routers registered. App ready.")
 

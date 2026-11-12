@@ -3,5 +3,4 @@ from typing import Optional, List
 
 class IngestResponse(BaseModel):
     status: str
-    chunks_added: int
-    collection: str
+    final_vector_db_result :List[dict]

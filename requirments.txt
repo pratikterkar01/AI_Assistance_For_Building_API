@@ -1,17 +1,45 @@
 fastapi
 uvicorn
 pydantic-settings
-langchain-openai
-langchain-community
-langchain-chroma
-chromadb
-pypdf
-ragas
-datasets
 python-multipart
+datasets
+# PDF parsing and document ingestion
+docling
+docling-core
+
+# LangChain integration
+# python -m pip install --upgrade --force-reinstall torch==2.12.1 torchvision==0.27.1 --index-url https://download.pytorch.org/whl/cu126
+## for chek the gpu cuda installed or not run below command
+## python -c "import torch; print('CUDA Available:', torch.cuda.is_available()); print('PyTorch:', torch.__version__); print('CUDA Version:', torch.version.cuda); print('GPU:', torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'Not detected')"
+
+langchain-core
+langchain-huggingface
+langchain-qdrant
+langchain_google_vertexai
+# Embedding models / PyTorch
+sentence-transformers
+transformers
+--extra-index-url https://download.pytorch.org/whl/cu126
+
+torch==2.12.1
+torchvision==0.27.1
+rank-bm25
+## below used for the gpu ocr use
+docling[onnxruntime]
+nvidia-cublas
+nvidia-cudnn-cu13
+nvidia-cuda-runtime
+nvidia-cufft
+nvidia-curand
+# Vector database
+qdrant-client
+# Configuration and validation
+pydantic
+pydantic-settings
+
+## evalution
+ragas
+
+# Optional: useful for loading environment variables from .env files
 python-dotenv
-structlog
-langchain-text-splitters
-langchain
-langchain-google-vertexai
-langchain_huggingface
+
