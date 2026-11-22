@@ -36,12 +36,18 @@ class Settings(BaseSettings):
     SOURCE_FIELD: str = "source"  # e.g. document name, used for citations
     SECTION_FIELD: str = "section"  # e.g. "6.5.1", used for citations
     VECTOR_NAME: str | None = None  # None for an unnamed vector, or e.g. "dense"
-
+    DENSE:str = "dense"
+    SPARSE:str = "bm25"
+    K1:float = 1.5
+    B:float = 0.75
+    OVERLAP :float= 0.6  # set by --overlap
+    TEXT_CANDIDATES:tuple = ("text", "page_content", "content", "chunk_text", "chunk")
     DENSE_TOP_K: int = 50
     BM25_TOP_K: int = 50
     RRF_K: int = 60
     RERANK_POOL: int = 30  # how many fused candidates the cross-encoder scores
     FINAL_TOP_K: int = 5
+    RERANK_MAX_LEN: int = 100
     RERANKER_NAME: str = "BAAI/bge-reranker-v2-m3"
     TEXT_CANDIDATES: tuple = ("text", "page_content", "content", "chunk_text", "chunk")
 

@@ -33,14 +33,12 @@ import time
 import zlib
 from collections import Counter
 
-from Utils import Config
+from Utils import Config,logger
 from qdrant_client import QdrantClient, models
 from  Model_Class import RetrivalClass
 
-DENSE = "dense"
-SPARSE = "bm25"
-K1, B = 1.5, 0.75
-TEXT_CANDIDATES = ("text", "page_content", "content", "chunk_text", "chunk")
+
+logger = logger.get_logger(__name__)
 global_Variable = Config.get_settings()
 _TOKEN = re.compile(r"[A-Za-z0-9]+(?:[.\-/][A-Za-z0-9]+)*")  # keeps 6.5.1, kW/m2, ECBC-2017 as one word
 
@@ -63,43 +61,45 @@ def encode_doc(text: str, avgdl: float) -> models.SparseVector:
     idx, val = [], []
     for term, tf in Counter(tokens).items():
         idx.append(token_id(term))
-        val.append(tf * (K1 + 1.0) / (tf + K1 * (1.0 - B + B * dl / avgdl)))
+        val.append(tf * (global_Variable.K1 + 1.0) / (tf + global_Variable.K1 * (1.0 - global_Variable.B + global_Variable.B * dl / avgdl)))
     return models.SparseVector(indices=idx, values=val)
 
 
 def encode_query(text: str) -> models.SparseVector | None:
-    terms = list(dict.fromkeys(tokenize(text)))
-    if not terms:
+    # Guard against None / non-string / whitespace-only input
+    if not isinstance(text, str) or not text.strip():
+        logger.warning("encode_query() got empty or invalid text: %r", text)
         return None
-    return models.SparseVector(indices=[token_id(t) for t in terms], values=[1.0] * len(terms))
+
+    try:
+        # dict.fromkeys removes duplicate terms while preserving order,
+        # so each term appears once in the sparse vector
+        terms = list(dict.fromkeys(tokenize(text)))
+
+        # Nothing left after tokenization (e.g. only stopwords/punctuation)
+        if not terms:
+            logger.warning("No tokens produced for query: %r", text[:100])
+            return None
+
+        # Map each term to its integer index in the sparse vector space
+        indices = [token_id(t) for t in terms]
+
+        logger.debug("encode_query | terms=%d query=%r", len(terms), text[:100])
+
+        return models.SparseVector(
+            indices=indices,
+            values=[1.0] * len(terms),  # binary weight per unique term
+        )
+
+    except Exception:
+        # Logs message + full traceback; re-raise so the caller knows encoding failed
+        logger.exception("Sparse query encoding failed | query=%r", text[:100])
+        raise
 
 
 # --------------------------------------------------------------------------
 # collection set-up and building
 # --------------------------------------------------------------------------
-def create_hybrid_collection(client: QdrantClient, name: str, dense_size: int,
-                             distance: models.Distance = models.Distance.COSINE) -> None:
-    """The configuration that must exist BEFORE the chunks are inserted."""
-    client.create_collection(
-        collection_name=name,
-        vectors_config={DENSE: models.VectorParams(size=dense_size, distance=distance)},
-        sparse_vectors_config={SPARSE: models.SparseVectorParams(modifier=models.Modifier.IDF)},
-    )
-
-
-def build_hybrid_db(db_path: str, collection: str, chunks: list[dict], embed_fn, dense_size: int, batch: int = 64) -> None:
-    """chunks = [{"id": int|str, "text": str, "payload": dict}]. Stores the text under payload['page_content']."""
-    client = QdrantClient(path=db_path)
-    create_hybrid_collection(client, collection, dense_size)
-    avgdl = sum(len(tokenize(c["text"])) for c in chunks) / max(len(chunks), 1) or 1.0
-    for s in range(0, len(chunks), batch):
-        part = chunks[s:s + batch]
-        dense = embed_fn([c["text"] for c in part])
-        client.upsert(collection, wait=True, points=[
-            models.PointStruct(id=c["id"], vector={DENSE: dense[i], SPARSE: encode_doc(c["text"], avgdl)},
-                               payload={**c.get("payload", {}), "page_content": c["text"]})
-            for i, c in enumerate(part)])
-    client.close()
 
 
 def _flat(payload: dict | None) -> dict:
@@ -110,47 +110,12 @@ def _flat(payload: dict | None) -> dict:
 
 def _text_of(payload: dict | None) -> str:
     p = _flat(payload)
-    for k in TEXT_CANDIDATES:
+    for k in global_Variable.TEXT_CANDIDATES:
         if k in p:
             return p[k] or ""
     return ""
 
 
-def convert_collection(src: QdrantClient, src_name: str, dst: QdrantClient, dst_name: str, batch: int = 256) -> int:
-    """Copy a dense-only collection into a hybrid one. Dense vectors and payloads are copied as they are."""
-    info = src.get_collection(src_name)
-    vecs = info.config.params.vectors
-    old_name, p = (next(iter(vecs)), vecs[next(iter(vecs))]) if isinstance(vecs, dict) else (None, vecs)
-    create_hybrid_collection(dst, dst_name, p.size, p.distance)
-
-    # pass 1: average chunk length (needed for BM25 length normalisation)
-    total, n, offset = 0, 0, None
-    while True:
-        pts, offset = src.scroll(src_name, limit=1000, offset=offset, with_payload=True, with_vectors=False)
-        for pt in pts:
-            total += len(tokenize(_text_of(pt.payload)))
-            n += 1
-        if offset is None:
-            break
-    avgdl = (total / n) if n else 1.0
-
-    # pass 2: copy
-    done, offset = 0, None
-    while True:
-        pts, offset = src.scroll(src_name, limit=batch, offset=offset, with_payload=True, with_vectors=True)
-        if pts:
-            dst.upsert(dst_name, wait=True, points=[
-                models.PointStruct(
-                    id=pt.id,
-                    vector={DENSE: pt.vector[old_name] if isinstance(pt.vector, dict) else pt.vector,
-                            SPARSE: encode_doc(_text_of(pt.payload), avgdl)},
-                    payload=pt.payload) for pt in pts])
-            done += len(pts)
-            if done % 5000 < batch:
-                print(f"      {done}/{n} chunks", flush=True)
-        if offset is None:
-            break
-    return done
 
 
 def discover_dbs(root: str) -> list[str]:
@@ -162,27 +127,7 @@ def discover_dbs(root: str) -> list[str]:
     return sorted(found)
 
 
-def convert_all(src_root: str, dst_root: str, only: str | None = None) -> None:
-    for db in discover_dbs(src_root):
-        rel = os.path.relpath(db, src_root)
-        if only and only.lower() not in rel.lower():
-            continue
-        out = os.path.join(dst_root, rel)
-        if os.path.exists(os.path.join(out, "meta.json")):
-            print(f"skip   {rel} (already converted)")
-            continue
-        os.makedirs(out, exist_ok=True)
-        src, dst = QdrantClient(path=db), QdrantClient(path=out)
-        try:
-            for c in src.get_collections().collections:
-                t = time.time()
-                print(f"==== {rel} / {c.name}", flush=True)
-                n = convert_collection(src, c.name, dst, c.name)
-                n_dst = dst.count(c.name).count
-                print(f"     {'OK' if n == n_dst else 'MISMATCH'}: copied {n}, new DB holds {n_dst}  ({time.time() - t:.0f}s)", flush=True)
-        finally:
-            src.close()
-            dst.close()
+
 
 
 def check(db: str, n: int = 20) -> None:
@@ -198,7 +143,7 @@ def check(db: str, n: int = 20) -> None:
         q = encode_query(_text_of(p.payload))
         if q is None:
             continue
-        top = client.query_points(coll, query=q, using=SPARSE, limit=3).points
+        top = client.query_points(coll, query=q, using=global_Variable.SPARSE, limit=3).points
         ok += int(p.id in [t.id for t in top])
     print(f"keyword search returns the chunk itself in its top 3 for {ok} of {len(pts)} sampled chunks (expect nearly all)")
     client.close()
@@ -209,12 +154,10 @@ def check(db: str, n: int = 20) -> None:
 # --------------------------------------------------------------------------
 class NativeHybridRetriever:
     def __init__(self, client, collection, embed_model, reranker_name=None, embedder=None, reranker=None, query_prefix=""):
-        from Services import HybrideRetrival as H
-        self.H = H
         self.client, self.collection, self.query_prefix = client, collection, query_prefix
         info = client.get_collection(collection)
-        if SPARSE not in (info.config.params.sparse_vectors or {}):
-            raise SystemExit(f"[{collection}] has no '{SPARSE}' sparse vector. Convert the DB first: python QdrantHybrideService.py convert ...")
+        if global_Variable.SPARSE not in (info.config.params.sparse_vectors or {}):
+            raise SystemExit(f"[{collection}] has no '{global_Variable.SPARSE}' sparse vector. Convert the DB first: python QdrantHybrideService.py convert ...")
         if embedder is None:
             from sentence_transformers import SentenceTransformer
             embedder = SentenceTransformer(embed_model)
@@ -224,24 +167,55 @@ class NativeHybridRetriever:
         self.embedder, self.reranker = embedder, reranker
 
     def retrieve(self, query: str, section=None, source=None):
-        H = self.H
-        conds = []
-        if section:
-            conds.append(models.FieldCondition(key=global_Variable.SECTION_FIELD, match=models.MatchValue(value=section)))
-        if source:
-            conds.append(models.FieldCondition(key=global_Variable.SOURCE_FIELD, match=models.MatchValue(value=source)))
-        flt = models.Filter(must=conds) if conds else None
+        try:
+            # ---------- Optional payload filters ----------
+            conds = []
+            if section:
+                conds.append(models.FieldCondition(key=global_Variable.SECTION_FIELD,match=models.MatchValue(value=section)))
+            if source:
+                conds.append(models.FieldCondition(key=global_Variable.SOURCE_FIELD,match=models.MatchValue(value=source)))
+            filter_with_conditions = models.Filter(must=conds) if conds else None
+            # ---------- Dense query vector ----------
+            dense_vec = self.embedder.encode(self.query_prefix + query, normalize_embeddings=True).tolist()
+            logger.debug("Dense vector created | query=%r", query[:100])
+            prefetch = [models.Prefetch(query=dense_vec,using=global_Variable.DENSE,limit=global_Variable.DENSE_TOP_K,filter=filter_with_conditions)]
+            # ---------- Sparse (BM25) query vector ----------
+            sparse = encode_query(query)
+            if sparse is not None:
+                logger.debug("Sparse vector created | query=%r", query[:100])
+                prefetch.append(models.Prefetch(query=sparse,using=global_Variable.SPARSE,limit=global_Variable.BM25_TOP_K,filter=filter_with_conditions))
+            else:
+                logger.info("No sparse terms, using dense-only | query=%r", query[:100])
 
-        dense_vec = self.embedder.encode(self.query_prefix + query, normalize_embeddings=True).tolist()
-        prefetch = [models.Prefetch(query=dense_vec, using=DENSE, limit=global_Variable.DENSE_TOP_K, filter=flt)]
-        sparse = encode_query(query)
-        if sparse is not None:
-            prefetch.append(models.Prefetch(query=sparse, using=SPARSE, limit=global_Variable.BM25_TOP_K, filter=flt))
-        res = self.client.query_points(
-            collection_name=self.collection, prefetch=prefetch,
-            query=models.RrfQuery(rrf=models.Rrf(k=global_Variable.RRF_K)),
-            limit=global_Variable.RERANK_POOL, with_payload=True).points
-        return [RetrivalClass.Hit(id=str(p.id), text=_text_of(p.payload), payload=_flat(p.payload), rrf_score=float(p.score)) for p in res]
+            # ---------- Fuse with RRF inside Qdrant ----------
+            res = self.client.query_points(
+                collection_name=self.collection,
+                prefetch=prefetch,
+                query=models.RrfQuery(rrf=models.Rrf(k=global_Variable.RRF_K)),
+                limit=global_Variable.RERANK_POOL,
+                with_payload=True,
+            ).points
+
+        except Exception:
+            # Log full traceback, then re-raise so search() can handle it.
+            logger.exception(
+                "Hybrid retrieval failed | query=%r section=%s source=%s collection=%s",
+                query[:100], section, source, self.collection,
+            )
+            raise
+
+        logger.info("Retrieved %d candidates | query=%r", len(res), query[:100])
+
+        # Built outside the try so `res` is guaranteed to exist here
+        return [
+            RetrivalClass.Hit(
+                id=str(p.id),
+                text=_text_of(p.payload),
+                payload=_flat(p.payload),
+                rrf_score=float(p.score),
+            )
+            for p in res
+        ]
 
     def rerank(self, query, hits, top_k):
         if not hits:
@@ -252,19 +226,92 @@ class NativeHybridRetriever:
         return sorted(hits, key=lambda h: h.rerank_score, reverse=True)[:top_k]
 
     def search(self, query, section=None, source=None, top_k=None):
-        H = self.H
+        # Validate input early so we fail fast with a clear message
+        if not query or not query.strip():
+            logger.warning("search() called with an empty query")
+            raise ValueError("query must be a non-empty string")
+
+        # Fall back to the global default if top_k is not given
         top_k = top_k or global_Variable.FINAL_TOP_K
         t = RetrivalClass.Timings()
+
+        logger.info(
+            "search start | query=%r section=%s source=%s top_k=%d",
+            query[:100], section, source, top_k,  # truncate long queries in logs
+        )
+
+        total_start = time.perf_counter()
+
+        # ---------- Stage 1: retrieval (embed + dense + sparse + RRF) ----------
+        fused = []
         t0 = time.perf_counter()
-        fused = self.retrieve(query, section, source)
-        t.ms["retrieve_parallel"] = (time.perf_counter() - t0) * 1000  # embed + dense + sparse + RRF, all in one call
+        try:
+            fused = self.retrieve(query, section, source)
+        except Exception:
+            # logger.exception logs the message AND the full traceback
+            logger.exception(
+                "Retrieval failed | query=%r section=%s source=%s",
+                query[:100], section, source,
+            )
+            raise  # no candidates -> cannot continue, let the caller handle it
+        finally:
+            # Record timing even when the stage fails
+            t.ms["retrieve_parallel"] = (time.perf_counter() - t0) * 1000
+
+        # RRF happens inside retrieve(), so it is tracked as 0 here
+        # (kept so the Timings keys stay consistent for downstream consumers)
         t.ms["rrf"] = 0.0
+
+        logger.debug("retrieve returned %d candidates in %.1f ms",
+                     len(fused), t.ms["retrieve_parallel"])
+
+        # Nothing retrieved: skip reranking and return an empty result
+        if not fused:
+            logger.warning("No candidates found | query=%r", query[:100])
+            t.ms["rerank"] = 0.0
+            t.ms["total"] = (time.perf_counter() - total_start) * 1000
+            return [], t
+
+        # ---------- Stage 2: reranking ----------
         t0 = time.perf_counter()
-        top = self.rerank(query, fused, top_k)
-        t.ms["rerank"] = (time.perf_counter() - t0) * 1000
+        try:
+            top = self.rerank(query, fused, top_k)
+        except Exception:
+            # Degrade gracefully: the fused order from RRF is still a decent ranking
+            logger.exception(
+                "Rerank failed, falling back to fused order | query=%r", query[:100]
+            )
+            top = fused[:top_k]
+        finally:
+            t.ms["rerank"] = (time.perf_counter() - t0) * 1000
+
+        # Sum of stages (same as before)
         t.ms["total"] = t.ms["retrieve_parallel"] + t.ms["rrf"] + t.ms["rerank"]
+
+        logger.info(
+            "search done | results=%d retrieve=%.1fms rerank=%.1fms total=%.1fms",
+            len(top), t.ms["retrieve_parallel"], t.ms["rerank"], t.ms["total"],
+        )
         return top, t
 
+    def make_client(self,path: str = global_Variable.DB_ROOT) -> QdrantClient:
+        logger.info(
+            "Inside make_client, Open the local Qdrant folder (embedded mode, no server). Fails if the folder does not exist.")
+        if not os.path.isdir(path):
+            logger.error(f"Quadrant DB not present at {path}")
+            raise SystemExit(
+                f"Qdrant folder not found: {path}\nPass the folder you used with QdrantClient(path=...) via --path.")
+        try:
+            client = QdrantClient(path=path)
+            names = [c.name for c in client.get_collections().collections]
+            logger.info(f"{len(names)} DB found")
+        except Exception as e:
+            # local mode allows one process at a time: close notebooks / other scripts that have the folder open
+            logger.error(f"Internal system error for opening DB : {e}")
+            raise SystemExit(
+                f"Could not open {path}: {e}\nIf another notebook or script has this folder open, close it first.")
+        print(f"Opened {path}; collections: {names}")
+        return client
 
 # --------------------------------------------------------------------------
 if __name__ == "__main__":
@@ -277,7 +324,5 @@ if __name__ == "__main__":
     k = sub.add_parser("check", help="verify the sparse side of one converted DB (needs no model)")
     k.add_argument("--db", required=True)
     a = ap.parse_args()
-    if a.cmd == "convert":
-        convert_all(a.src, a.dst, a.only)
-    else:
-        check(a.db)
+
+    check(a.db)

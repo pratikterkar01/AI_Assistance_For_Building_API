@@ -21,12 +21,6 @@ class IngectionExccution:
 
     # ============================== small helpers ===============================
 
-    ##
-    def doc_slug(self,document_name):
-        base = os.path.splitext(os.path.basename(str(document_name)))[0]
-        base = re.sub(r"[^A-Za-z0-9]+", "_", base).strip("_")[:25] or "doc"
-        return f"{base}_{hashlib.md5(str(document_name).encode('utf-8')).hexdigest()[:6]}"
-
 
     def chunks_fingerprint(self,chunks):
         h = hashlib.md5()
@@ -57,36 +51,9 @@ class IngectionExccution:
         os.replace(tmp, os.path.join(db_path, global_Variable.MANIFEST_FILE))
 
 
-    def save_parents(self,db_path, parents, source):
-        """Merge this PDF's parents into parents.json (other PDFs are kept)."""
-        path = os.path.join(db_path, global_Variable.PARENTS_FILE)
-        data = {}
-        if os.path.exists(path):
-            with open(path, encoding="utf-8") as f:
-                data = json.load(f)
-        data = {pid: d for pid, d in data.items() if d["metadata"].get("source") != source}
-        for p in parents:
-            data[p.metadata["parent_id"]] = {"page_content": p.page_content,
-                                             "metadata": p.metadata}
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False)
 
 
-    def load_parents(self,db_path):
-        with open(os.path.join(db_path, global_Variable.PARENTS_FILE), encoding="utf-8") as f:
-            data = json.load(f)
-        return {pid: Document(**d) for pid, d in data.items()}
-
-
-    def parents_present(self,db_path, source):
-        try:
-            with open(os.path.join(db_path, global_Variable.PARENTS_FILE), encoding="utf-8") as f:
-                return any(d["metadata"].get("source") == source for d in json.load(f).values())
-        except (FileNotFoundError, json.JSONDecodeError):
-            return False
-
-
-    # ============================ the main function =============================
+      # ============================ the main function =============================
     def execute_all_combinations(self,documen_parse, document_name):
         logger.info(f"Inside execute_all_combinations ")
         embedding_service = Embeding.EmbedingService()
@@ -121,8 +88,7 @@ class IngectionExccution:
                 combination_name = f"{embedding_folder}_{chunking_name}"
                 collection_name = combination_name.replace("-", "_")
                 results["collection_name"] = collection_name
-                db_path = os.path.join(db_root, f"{embedding_folder}_Embedding", chunking_name)
-                is_hier = chunking_name == "HierarchicalChunking"
+                db_path = os.path.join(db_root)
                 stage = "chunk"
                 try:
                     chunks = get_chunks(chunking_name)
@@ -138,7 +104,7 @@ class IngectionExccution:
                             and entry.get("count") == len(chunks)
                             and embedding_service.count_source(
                         db_path, collection_name, document_name) == len(chunks)
-                            and (not is_hier or  self.parents_present(db_path, document_name))
+
                     ):
                         logger.info(f"Skipping (already complete): {combination_name}")
                         results["skipped"].append(combination_name)
@@ -243,7 +209,8 @@ class IngectionExccution:
             return []
 
 
-    def run_experiment(self):
+    ## Initialize the ingection and vector db process
+    def initialize_ingestion(self):
         final_result = []
         txt_files = sorted(Path(global_Variable.PARSED_DIR).glob("*.txt"))
 

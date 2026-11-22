@@ -6,6 +6,7 @@ from fastapi import FastAPI
 from controller.chat_controller import router as chat_router
 from controller.document_controller import router as doc_router
 from controller.evaluation_controller import router as eval_router
+from  controller.retrival_controller import router as retrival_router
 from controller.health_controller import router as health_router
 
 logger = get_logger(__name__)
@@ -24,9 +25,10 @@ async def on_shutdown():
 
 def register_all_routers(app: FastAPI):
     #app.include_router(health_router, prefix="/api/v1", tags=["Health"])
-    app.include_router(health_router, prefix="/api/v1", tags=["Health"])
-    app.include_router(chat_router, prefix="/api/v1", tags=["Chat"])
-    app.include_router(doc_router, prefix="/api/v1", tags=["Documents"])
+    app.include_router(health_router, prefix="/api/health_controller", tags=["Health"])
+    app.include_router(chat_router, prefix="/api/chat_controller", tags=["Chat"])
+    app.include_router(doc_router, prefix="/api/document_controller", tags=["Documents"])
+    app.include_router(retrival_router, prefix="/api/retrival_controller", tags=["Retrival"])
     #app.include_router(eval_router, prefix="/api/v1", tags=["Evaluation"])
 
 

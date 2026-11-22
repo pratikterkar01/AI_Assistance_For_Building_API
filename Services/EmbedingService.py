@@ -7,10 +7,10 @@ from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_qdrant import QdrantVectorStore, RetrievalMode, SparseEmbeddings, SparseVector
 from qdrant_client import QdrantClient, models
 from Services import QdrantHybrideService as QH
-from Utils import logger
+from Utils import logger,Config
 
 logger = logger.get_logger(__name__)
-
+global_variable = Config.get_settings()
 class OOMSafeEmbeddings(Embeddings):
     """Wraps an embedding model. On CUDA out-of-memory it halves the batch size
     and retries the same batch, so a build keeps going instead of failing."""
@@ -134,7 +134,7 @@ class EmbedingService:
     def _is_hybrid(client, collection_name):
         """True if the collection already has the 'bm25' sparse vector."""
         info = client.get_collection(collection_name)
-        return QH.SPARSE in (info.config.params.sparse_vectors or {})
+        return global_variable.SPARSE in (info.config.params.sparse_vectors or {})
 
     # NEW
     @staticmethod
@@ -154,7 +154,7 @@ class EmbedingService:
         if not client.collection_exists(collection_name):
             size = len(embeddings.embed_query("dimension probe"))
             if hybrid:  # CHANGED: named dense vector + sparse BM25 vector, created BEFORE any chunk is inserted
-                QH.create_hybrid_collection(client, collection_name, size, models.Distance.COSINE)
+                self.create_hybrid_collection(client, collection_name, size, models.Distance.COSINE)
             else:
                 client.create_collection(
                     collection_name=collection_name,
@@ -173,26 +173,23 @@ class EmbedingService:
                 embedding=embeddings,
                 sparse_embedding=BM25SparseEmbeddings(avgdl=avgdl),
                 retrieval_mode=RetrievalMode.HYBRID,
-                vector_name=QH.DENSE,
-                sparse_vector_name=QH.SPARSE,
+                vector_name=global_variable.DENSE,
+                sparse_vector_name=global_variable.SPARSE,
             )
-        else:
-            if hybrid:
-                raise RuntimeError(
-                    f"'{collection_name}' in {db_path} is an old dense-only collection. Convert it first "
-                    "(python QdrantHybrideService.py convert --src <old DB root> --dst <new DB root>), "
-                    "or call vectore_store(..., hybrid=False) to keep adding dense-only chunks.")
-            vector_store = QdrantVectorStore(
-                client=client,
-                collection_name=collection_name,
-                embedding=embeddings,
-                vector_name=self._dense_vector_name(client, collection_name),
-            )
+
         for i in range(0, len(langchain_chunks), batch):
             vector_store.add_documents(langchain_chunks[i:i + batch])
 
         return vector_store
 
+    def create_hybrid_collection(self,client: QdrantClient, name: str, dense_size: int,
+                                 distance: models.Distance = models.Distance.COSINE) -> None:
+        """The configuration that must exist BEFORE the chunks are inserted."""
+        client.create_collection(
+            collection_name=name,
+            vectors_config={global_variable.DENSE: models.VectorParams(size=dense_size, distance=distance)},
+            sparse_vectors_config={global_variable.SPARSE: models.SparseVectorParams(modifier=models.Modifier.IDF)},
+        )
     #detects the collection type: hybrid DB -> HYBRID store, old dense-only DB -> DENSE store
     def open_store(self, embeddings, collection_name, db_path):
         """Open an existing DB for searching (no building).
@@ -205,8 +202,8 @@ class EmbedingService:
                 embedding=embeddings,
                 sparse_embedding=BM25SparseEmbeddings(),  # queries do not need avgdl
                 retrieval_mode=RetrievalMode.HYBRID,
-                vector_name=QH.DENSE,
-                sparse_vector_name=QH.SPARSE,
+                vector_name=global_variable.DENSE,
+                sparse_vector_name=global_variable.SPARSE,
             )
         return QdrantVectorStore(
             client=client,

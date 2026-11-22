@@ -17,7 +17,7 @@ async def upload_document( file: UploadFile = File(...), doc_type: str = Form("a
     ingection_excecution = IngectionExccution()
     #ingection_excecution.parse_and_save_all_pdfs(file)
     ## create the vector DB
-    result = ingection_excecution.run_experiment()
+    result = ingection_excecution.initialize_ingestion()
     '''count = add_documents(chunks)'''
 
     return IngestResponse(
