@@ -7,6 +7,17 @@ datasets
 docling
 docling-core
 
+## database
+sqlalchemy[asyncio]
+asyncpg
+
+## auth
+jwt
+httpx
+"pyjwt[crypto]"
+redis
+slowapi
+
 # LangChain integration
 # python -m pip install --upgrade --force-reinstall torch==2.12.1 torchvision==0.27.1 --index-url https://download.pytorch.org/whl/cu126
 ## for chek the gpu cuda installed or not run below command
@@ -16,6 +27,7 @@ langchain-core
 langchain-huggingface
 langchain-qdrant
 langchain_google_vertexai
+langchain_ollama
 # Embedding models / PyTorch
 sentence-transformers
 transformers

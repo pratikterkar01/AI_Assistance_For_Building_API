@@ -2,7 +2,7 @@ import torch
 import re
 import time
 import math
-from Services import QdrantHybrideService as Q
+from RagServices import QdrantHybrideService as Q
 from Model_Class import RetrivalClass
 from sentence_transformers import  SentenceTransformer,CrossEncoder
 from qdrant_client import QdrantClient

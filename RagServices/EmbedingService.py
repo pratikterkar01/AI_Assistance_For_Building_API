@@ -6,7 +6,7 @@ from langchain_core.embeddings import Embeddings
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_qdrant import QdrantVectorStore, RetrievalMode, SparseEmbeddings, SparseVector
 from qdrant_client import QdrantClient, models
-from Services import QdrantHybrideService as QH
+from RagServices import QdrantHybrideService as QH
 from Utils import logger,Config
 
 logger = logger.get_logger(__name__)

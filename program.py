@@ -7,7 +7,9 @@ from controller.chat_controller import router as chat_router
 from controller.document_controller import router as doc_router
 from controller.evaluation_controller import router as eval_router
 from  controller.retrival_controller import router as retrival_router
+from  controller.rag_controller import router as rag_router
 from controller.health_controller import router as health_router
+from Utils.db_client import check_db_connection,init_db,close_db
 
 logger = get_logger(__name__)
 settings = get_settings()
@@ -16,12 +18,18 @@ settings = get_settings()
 async def on_startup():
     logger.info("Starting up AiBuildingAssistanceApi...")
     #init_chromadb()                  # initialise ChromaDB collection
+
+    ## Init_sql_db
+    if not await check_db_connection():
+        raise RuntimeError("Cannot connect to PostgreSQL. Check your .env settings.")
+    await init_db()
     register_all_routers(app)        # mount all controllers
     logger.info("All routers registered. App ready.")
 
 @app.on_event("shutdown")
 async def on_shutdown():
     logger.info("Shutting down gracefully...")
+    await close_db()
 
 def register_all_routers(app: FastAPI):
     #app.include_router(health_router, prefix="/api/v1", tags=["Health"])
@@ -29,6 +37,7 @@ def register_all_routers(app: FastAPI):
     app.include_router(chat_router, prefix="/api/chat_controller", tags=["Chat"])
     app.include_router(doc_router, prefix="/api/document_controller", tags=["Documents"])
     app.include_router(retrival_router, prefix="/api/retrival_controller", tags=["Retrival"])
+    app.include_router(rag_router, prefix="/api/rag_controller", tags=["Rag"])
     #app.include_router(eval_router, prefix="/api/v1", tags=["Evaluation"])
 
 

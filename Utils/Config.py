@@ -7,6 +7,13 @@ class Settings(BaseSettings):
     PORT: int = 8080
     DEBUG: bool = True
 
+    ## POSTGRES sql
+    POSTGRES_USER: str = "postgres"
+    POSTGRES_PASSWORD: str = "pass123"
+    POSTGRES_HOST: str = "localhost"
+    POSTGRES_PORT: int = 5432
+    POSTGRES_DB: str = "ai_building_db"
+
     # ChromaDB
     CHROMA_COLLECTION: str = "building_docs"
     CHROMA_PERSIST_DIR: str = "D:\\AiEnergyAssitanceForBuilding\\AiBuildingAssistanceApi\\ChromeDB"
@@ -81,6 +88,22 @@ class Settings(BaseSettings):
         Answer: {ABSTAIN_TEXT}
         """
 
+    # LLM
+    provider: str = os.getenv("RAG_LLM_PROVIDER", "ollama")  # "ollama" | "openai"
+    ollama_model: str = os.getenv("RAG_OLLAMA_MODEL", "qwen3:4b")
+    ollama_url: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+    openai_model: str = os.getenv("RAG_OPENAI_MODEL", "gpt-4o")  # set to the GPT-4 model you use
+    num_ctx: int = int(os.getenv("RAG_NUM_CTX", "4096"))  # raise if you send bigger parents
+    max_new_tokens: int = int(os.getenv("RAG_MAX_NEW_TOKENS", "400"))
+    keep_alive: str = os.getenv("RAG_KEEP_ALIVE", "30m")  # keep the model loaded in VRAM
+    # Retrieval -> augmentation
+    retrieve_top_k: int = 5  # hits asked from the retriever (after rerank)
+    max_parents: int = 3  # parent sections sent to the LLM
+    parent_max_chars: int = 2400  # ~600 tokens per parent
+    # Evidence gate. CrossEncoder gives 0-1 scores for bge-reranker-v2-m3 (sigmoid). TUNE on your golden set.
+    min_rerank_score: float = float(os.getenv("RAG_MIN_RERANK", "0.05"))
+
+
     # ---- 2. Dynamic part (context + question) ----
     HUMAN_PROMPT: str = """Context:
         {context}
@@ -100,7 +123,12 @@ class Settings(BaseSettings):
     class ConfigDict:
         env_file = ".env"
 
-
+    @property
+    def DATABASE_URL(self) -> str:
+        return (
+            f"postgresql+asyncpg://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}"
+            f"@{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
+        )
 
 @lru_cache()
 def get_settings():

@@ -4,10 +4,10 @@ import hashlib
 import re
 import json
 from Utils import Config,logger
-from Services import StructureAwareChunking
-from Services import EmbedingService as Embeding
+from RagServices import StructureAwareChunking
+from RagServices import EmbedingService as Embeding
 from langchain_core.documents import Document
-from Services import IngestionService as Ingestion
+from RagServices import IngestionService as Ingestion
 from fastapi import  UploadFile, File
 from pathlib import Path
 

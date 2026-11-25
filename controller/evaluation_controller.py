@@ -1,7 +1,7 @@
 from fastapi import APIRouter
 from Model_Class.EvalRequest import EvalRequest
 from Model_Class.EvalResponse import EvalResponse
-from Services.evaluation_service import run_evaluation
+from RagServices.evaluation_service import run_evaluation
 
 router = APIRouter()
 

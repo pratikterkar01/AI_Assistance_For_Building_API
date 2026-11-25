@@ -1,7 +1,7 @@
 from fastapi import APIRouter, UploadFile, File, Form
 from Model_Class.IngestResponse import IngestResponse
-from Services.IngectionExcecution import IngectionExccution
-#from Services.vectorstore_service import add_documents
+from RagServices.IngectionExcecution import IngectionExccution
+#from RagServices.vectorstore_service import add_documents
 from Utils.logger import get_logger
 
 

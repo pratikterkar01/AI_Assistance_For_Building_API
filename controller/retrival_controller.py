@@ -1,6 +1,6 @@
 from fastapi import APIRouter, UploadFile, File, Form
 from Model_Class.QuestionModel import QuestionModel
-from Services.RetrivalService import RetrivalService
+from RagServices.RetrivalService import RetrivalService
 from Utils.logger import get_logger
 import json
 
